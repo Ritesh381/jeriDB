@@ -35,12 +35,29 @@ export function setupVectorRoutes(app, vectorDB) {
     }
   })
   
+  // 🔥 FIXED DELETE ROUTE WITH FULL LOGGING
   router.delete('/nodes/:id', async (req, res) => {
+    const docId = req.params.id;
+    console.log(`🗑️ VECTOR ROUTE: Deleting document ${docId}`);
+    
     try {
-      await vectorDB.deleteDocument(req.params.id)
-      res.json({ success: true, message: `Document deleted: ${req.params.id}` })
+      // 1. Check if exists first
+      try {
+        await vectorDB.getDocument(docId);
+        console.log(`✅ Document ${docId} exists - proceeding to delete`);
+      } catch {
+        console.log(`ℹ️ Document ${docId} already gone from vectorDB`);
+        return res.json({ success: true, message: `Document ${docId} not found (already deleted)` });
+      }
+      
+      // 2. ACTUAL DELETE
+      await vectorDB.deleteDocument(docId);
+      console.log(`✅ VECTOR ROUTE: Document ${docId} DELETED SUCCESSFULLY`);
+      
+      res.json({ success: true, message: `Document deleted: ${docId}` });
     } catch (error) {
-      res.status(500).json({ error: error.message })
+      console.error(`❌ VECTOR ROUTE DELETE FAILED for ${docId}:`, error.message);
+      res.status(500).json({ error: error.message });
     }
   })
   

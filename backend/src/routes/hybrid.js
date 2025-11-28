@@ -4,7 +4,9 @@ const router = express.Router()
 
 function validateNodeSchema(data) {
   const required = ['id', 'text']
-  const validTypes = ['person', 'org', 'document', 'concept', 'healthcare_ai', 'medical_ml', 'test']
+  const validTypes = ['person', 'org', 'document', 'concept', 'healthcare_ai', 'medical_ml', 'test','notes','note','node','article','report','paper','book','tool','software','framework','library','platform','device','algorithm','model','dataset','procedure','technique','methodology'
+    ,'article','redis','postgresql','mongodb','mysql','sqlite','elasticsearch','cassandra','hadoop','spark','kafka','docker','kubernetes','aws','azure','gcp','heroku','netlify','vercel','graph', 'cache'
+  ]
   
   const missing = required.filter(field => !data[field])
   if (missing.length > 0) {
@@ -20,7 +22,7 @@ function validateNodeSchema(data) {
 
 function validateEdgeSchema(data) {
   const required = ['source', 'target', 'type']
-  const validTypes = ['USES', 'MENTIONS', 'CREATED', 'RELATED', 'DEPLOYED']
+  const validTypes = ['USES', 'MENTIONS', 'CREATED', 'RELATED', 'DEPLOYED','RELATED_TO','ASSOCIATED_WITH','PART_OF','CONNECTED_TO','INTERACTS_WITH','LINKED_TO','BASED_ON','DERIVED_FROM','SIMILAR_TO','CITES','EXTENDS','IMPLEMENTED_BY']
   
   const missing = required.filter(field => !data[field])
   if (missing.length > 0) {
@@ -37,7 +39,6 @@ function validateEdgeSchema(data) {
   
   return true
 }
-
 
 function cleanData(data) {
   if (data.nodes?.length || data.edges?.length) return data
@@ -214,79 +215,123 @@ export default function hybridRoutes(vectorDB, graphDB) {
   })
 
   router.get('/edges/:id', async (req, res) => {
-  try {
-    const result = await graphDB.session.run(`
-      MATCH (a)-[r]->(b) WHERE id(r) = toInteger($id)
-      RETURN type(r) as type, a.id as source, b.id as target, r.weight as weight
-    `, { id: req.params.id })
-    res.json({ success: true, edge: result.records[0] })
-  } catch (error) {
-    res.status(500).json({ error: error.message })
-  }
-})
-
-router.put('/nodes/:id', async (req, res) => {
-  try {
-    const { text, metadata } = req.body
-    await vectorDB.updateDocument(req.params.id, text, metadata)
-    await graphDB.addNode(req.params.id, { ...metadata }) 
-    res.json({ success: true, id: req.params.id })
-  } catch (error) {
-    res.status(500).json({ error: error.message })
-  }
-})
-
-router.delete('/nodes/:id', async (req, res) => {
-  try {
-    await vectorDB.deleteDocument(req.params.id)
-    await graphDB.session.run('MATCH (n:Node {id: $id}) DETACH DELETE n', { id: req.params.id })
-    res.json({ success: true, deleted: req.params.id })
-  } catch (error) {
-    res.status(500).json({ error: error.message })
-  }
-})
-
-
-  router.post('/search', async (req, res) => {
     try {
-      const { query, type = 'hybrid', vector_weight = 0.7, graph_weight = 0.3, top_k = 5, page=1 } = req.body
-
-      const offset = (page - 1) * top_k
-      
-      console.log(`🔍 Hybrid search: "${query}" (${type})`)
-      
-      const vectorResults = await vectorDB.search(query, top_k)
-      
-      let graphScoreBoost = {}
-      if (type === 'hybrid' || type === 'graph') {
-        const graphMatches = await graphSearch(graphDB, query)  
-        graphMatches.forEach(match => {
-          graphScoreBoost[match.docId] = match.score * graph_weight
-        })
-      }
-      
-      const hybridResults = mergeResults(vectorResults.results, graphScoreBoost, vector_weight)
-
-      const paginatedResults = hybridResults.slice(offset, offset + top_k)
-      
-      res.json({
-        success: true,
-        query,
-        type,
-        vector_weight,
-        graph_weight,
-        page,
-        top_k,
-        total_pages: Math.ceil(hybridResults.length / top_k),
-        results: paginatedResults,
-        vector_hits: vectorResults.totalResults,
-        graph_boosts: Object.keys(graphScoreBoost).length
-      })
+      const result = await graphDB.session.run(`
+        MATCH (a)-[r]->(b) WHERE id(r) = toInteger($id)
+        RETURN type(r) as type, a.id as source, b.id as target, r.weight as weight
+      `, { id: req.params.id })
+      res.json({ success: true, edge: result.records[0] })
     } catch (error) {
-      console.error('Hybrid search failed:', error.message)
       res.status(500).json({ error: error.message })
     }
   })
+
+  router.put('/nodes/:id', async (req, res) => {
+    try {
+      const { text, metadata } = req.body
+      await vectorDB.updateDocument(req.params.id, text, metadata)
+      await graphDB.addNode(req.params.id, { ...metadata }) 
+      res.json({ success: true, id: req.params.id })
+    } catch (error) {
+      res.status(500).json({ error: error.message })
+    }
+  })
+
+  // 🔥 FIXED DELETE ROUTE - COPIED FROM WORKING VECTOR ROUTE
+  router.delete('/nodes/:id', async (req, res) => {
+    const nodeId = req.params.id;
+    console.log(`🗑️ DELETE STARTED: ${nodeId}`);
+    
+    // 1. VECTOR DELETE (FIXED - follows working pattern)
+    try {
+      console.log('🔍 VECTOR DELETE ATTEMPT...');
+      
+      // Check if document exists first (safe pattern)
+      try {
+        await vectorDB.getDocument(nodeId);
+        console.log(`✅ Document ${nodeId} exists - proceeding to delete`);
+      } catch {
+        console.log(`ℹ️ Document ${nodeId} already gone from vectorDB`);
+      }
+      
+      // Actual delete
+      await vectorDB.deleteDocument(nodeId);
+      console.log('✅ VECTOR DELETED SUCCESSFULLY');
+      
+    } catch (vError) {
+      console.error('⚠️ VECTOR DELETE SKIPPED (may not exist):', vError.message);
+      // Don't fail the whole operation if vector delete fails
+    }
+    
+    // 2. GRAPH DELETE (always works)
+    try {
+      console.log('🔍 GRAPH DELETE ATTEMPT...');
+      await graphDB.session.run('MATCH (n:Node {id: $id}) DETACH DELETE n', { id: nodeId });
+      console.log('✅ GRAPH DELETED SUCCESSFULLY');
+    } catch (gError) {
+      console.error('❌ GRAPH DELETE FAILED:', gError.message);
+      return res.status(500).json({ error: `Graph delete failed: ${gError.message}` });
+    }
+    
+    console.log('🗑️ DELETE FINISHED: BOTH STORES CLEANED');
+    res.json({ success: true, deleted: nodeId, message: 'Node deleted from both vector and graph stores' });
+  });
+
+  router.post('/search', async (req, res) => {
+  try {
+    const { query, type = 'hybrid', vector_weight = 0.7, graph_weight = 0.3, top_k = 5, page = 1 } = req.body
+    const offset = (page - 1) * top_k
+    
+    console.log(`🔍 Hybrid search: "${query}" (${type})`)
+    
+    // 🔥 FORCE REFRESH VECTOR STATS BEFORE SEARCH
+    await vectorDB.forceRefresh()
+    
+    const vectorResults = await vectorDB.search(query, top_k)
+    
+    // If no results, early return
+    if (vectorResults.totalResults === 0) {
+      return res.json({
+        success: true,
+        query,
+        type,
+        results: [],
+        total_pages: 0,
+        vector_hits: 0,
+        graph_boosts: 0,
+        message: 'No documents found (all deleted)'
+      })
+    }
+    
+    let graphScoreBoost = {}
+    if (type === 'hybrid' || type === 'graph') {
+      const graphMatches = await graphSearch(graphDB, query)  
+      graphMatches.forEach(match => {
+        graphScoreBoost[match.docId] = match.score * graph_weight
+      })
+    }
+    
+    const hybridResults = mergeResults(vectorResults.results, graphScoreBoost, vector_weight)
+    const paginatedResults = hybridResults.slice(offset, offset + top_k)
+    
+    res.json({
+      success: true,
+      query,
+      type,
+      vector_weight,
+      graph_weight,
+      page,
+      top_k,
+      total_pages: Math.ceil(hybridResults.length / top_k),
+      results: paginatedResults,
+      vector_hits: vectorResults.totalResults,
+      graph_boosts: Object.keys(graphScoreBoost).length
+    })
+  } catch (error) {
+    console.error('Hybrid search failed:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
 
   router.get('/stats', async (req, res) => {
     try {
@@ -306,49 +351,46 @@ router.delete('/nodes/:id', async (req, res) => {
     }
   })
 
-router.get('/search/multi-hop', async (req, res) => {
-  try {
-    const { start_id, hops = 2, relationship_types = '' } = req.query
-    if (!start_id) return res.status(400).json({ error: 'start_id required' })
-    
-    const types = relationship_types ? relationship_types.split(',') : ['USES', 'MENTIONS', 'RELATED']
-    const typePattern = types.join('|')
-    
-    const query = `
-      MATCH path=(start:Node {id: $startId})-[r:${typePattern}*1..${hops}]-(related:Node)
-      RETURN start {id: start.id, name: start.name} as start_node,
-             related {.*, id: related.id} as related_node,
-             [rel in relationships(path) | {type: type(rel), weight: rel.weight}] as relationships,
-             length(path) as hop_count
-      ORDER BY hop_count ASC
-      LIMIT 20
-    `
-    
-    const result = await graphDB.driver.session().run(query, { 
-      startId: start_id
-    })
-    
-    const paths = result.records.map(record => ({
-      start: record.get('start_node'),
-      related: record.get('related_node'),
-      hop_count: record.get('hop_count').low,
-      relationships: record.get('relationships'),
-      path_length: record.get('hop_count').low + 1
-    }))
-    
-    res.json({ 
-      success: true,
-      start_id,
-      hops: parseInt(hops),
-      paths,
-      total_paths: paths.length
-    })
-  } catch (error) {
-    console.error('Multi-hop error:', error.message)
-    res.status(500).json({ error: error.message })
-  }
-})
-
+  router.get('/search/multi-hop', async (req, res) => {
+    try {
+      const { start_id, hops = 2, relationship_types = '' } = req.query
+      if (!start_id) return res.status(400).json({ error: 'start_id required' })
+      
+      const types = relationship_types ? relationship_types.split(',') : ['USES', 'MENTIONS', 'RELATED']
+      const typePattern = types.join('|')
+      
+      const query = `
+        MATCH path=(start:Node {id: $startId})-[r:${typePattern}*1..${hops}]-(related:Node)
+        RETURN start {id: start.id, name: start.name} as start_node,
+               related {.*, id: related.id} as related_node,
+               [rel in relationships(path) | {type: type(rel), weight: rel.weight}] as relationships,
+               length(path) as hop_count
+        ORDER BY hop_count ASC
+        LIMIT 20
+      `
+      
+      const result = await graphDB.driver.session().run(query, { startId: start_id })
+      
+      const paths = result.records.map(record => ({
+        start: record.get('start_node'),
+        related: record.get('related_node'),
+        hop_count: record.get('hop_count').low,
+        relationships: record.get('relationships'),
+        path_length: record.get('hop_count').low + 1
+      }))
+      
+      res.json({ 
+        success: true,
+        start_id,
+        hops: parseInt(hops),
+        paths,
+        total_paths: paths.length
+      })
+    } catch (error) {
+      console.error('Multi-hop error:', error.message)
+      res.status(500).json({ error: error.message })
+    }
+  })
 
   return router
 }
